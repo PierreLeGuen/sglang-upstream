@@ -14,9 +14,6 @@ from sglang.srt.layers.dp_attention import (
     attn_cp_all_gather_into_tensor,
     is_allocation_symmetric,
 )
-from sglang.srt.layers.utils.cp_utils import (
-    ContextParallelMetadata as LegacyZigzagCPMetadata,
-)
 from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph import (
     is_in_breakable_cuda_graph,
 )
@@ -183,6 +180,9 @@ def cp_zigzag_full_plan_rows(
     forward_batch: "ForwardBatch", device: torch.device
 ) -> torch.Tensor | None:
     from sglang.srt.layers.cp.zigzag import ZigzagContextParallelMetadata
+    from sglang.srt.layers.utils.cp_utils import (
+        ContextParallelMetadata as LegacyZigzagCPMetadata,
+    )
 
     cp_meta = forward_batch.attn_cp_metadata
     if not isinstance(cp_meta, (ZigzagContextParallelMetadata, LegacyZigzagCPMetadata)):
