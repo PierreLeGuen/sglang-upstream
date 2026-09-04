@@ -55,6 +55,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
     field_serializer,
     field_validator,
     model_serializer,
@@ -924,6 +925,7 @@ class ChatCompletionRequest(BaseModel):
     # Custom logit processor for advanced sampling control
     custom_logit_processor: Optional[Union[List[Optional[str]], str]] = None
     custom_params: Optional[Dict] = None
+    thinking_token_budget: Optional[StrictInt] = Field(default=None, ge=0)
 
     # Pre-computed prompt token IDs: when provided, bypasses chat template
     # tokenization entirely.  Messages are still used to derive stop tokens
@@ -964,6 +966,27 @@ class ChatCompletionRequest(BaseModel):
     @classmethod
     def _handle_deprecated_dp_rank(cls, values):
         return _migrate_deprecated_dp_rank(values)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_thinking_token_budget(cls, values):
+        if not isinstance(values, dict):
+            return values
+        custom_params = values.get("custom_params")
+        if custom_params is None:
+            custom_params = {}
+        if not isinstance(custom_params, dict) or "thinking_budget" in custom_params:
+            return values
+        if "thinking_token_budget" in values:
+            budget = values.get("thinking_token_budget")
+        else:
+            budget = 8192
+        if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
+            values = dict(values)
+            custom_params = dict(custom_params)
+            custom_params["thinking_budget"] = budget
+            values["custom_params"] = custom_params
+        return values
 
     @model_validator(mode="before")
     @classmethod
