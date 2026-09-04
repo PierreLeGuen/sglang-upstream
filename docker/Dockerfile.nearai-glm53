@@ -1,0 +1,11 @@
+FROM lmsysorg/sglang@sha256:eb090e39434085f713d39421cb2e5b6d342424aa95c3d9ecdfe8cadd4289e99b
+RUN python3 -m pip install setuptools-rust==1.13.0 setuptools-scm==10.2.3 pytest-asyncio==1.4.0
+RUN rm -rf /sgl-workspace/sglang
+COPY . /sgl-workspace/sglang
+WORKDIR /sgl-workspace/sglang
+RUN --mount=type=cache,target=/sgl-workspace/sglang/rust/target --mount=type=cache,target=/sgl-workspace/sglang/rust/sglang-radix-tree/target CARGO_BUILD_JOBS=8 SETUPTOOLS_SCM_PRETEND_VERSION=0.5.16.dev20260904 python3 -m pip install --no-deps --no-build-isolation -e python
+ARG SGLANG_REVISION
+RUN test -n "$SGLANG_REVISION"
+LABEL org.opencontainers.image.source="https://github.com/PierreLeGuen/sglang-upstream" \
+      org.opencontainers.image.revision="${SGLANG_REVISION}"
+RUN python3 -c "import sglang; from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest; print(sglang.__file__)"
