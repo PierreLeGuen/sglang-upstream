@@ -9,7 +9,6 @@ from sglang.srt.distributed.device_communicators.pynccl_allocator import (
     use_symmetric_memory,
 )
 from sglang.srt.environ import envs
-from sglang.srt.layers.cp.zigzag import ZigzagContextParallelMetadata
 from sglang.srt.layers.dp_attention import (
     DpPaddingMode,
     attn_cp_all_gather_into_tensor,
@@ -183,6 +182,8 @@ def can_dsa_prefill_cp_round_robin_split(forward_batch: "ForwardBatch"):
 def cp_zigzag_full_plan_rows(
     forward_batch: "ForwardBatch", device: torch.device
 ) -> torch.Tensor | None:
+    from sglang.srt.layers.cp.zigzag import ZigzagContextParallelMetadata
+
     cp_meta = forward_batch.attn_cp_metadata
     if not isinstance(cp_meta, (ZigzagContextParallelMetadata, LegacyZigzagCPMetadata)):
         return None
