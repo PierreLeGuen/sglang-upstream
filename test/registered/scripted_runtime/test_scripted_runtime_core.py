@@ -171,9 +171,9 @@ class TestScriptedRuntimeCore(ScriptedTestCase):
             raise AssertionError("last prefill chunk was not launched before abort")
 
         assert len(req.output_ids) == 0
-        assert (
-            t.scheduler.result_queue
-        ), "last prefill result was not pending when abort arrived"
+        assert t.scheduler.result_queue, (
+            "last prefill result was not pending when abort arrived"
+        )
         prefill_kv_end = req.extend_range.end
         assert prefill_kv_end == len(req.origin_input_ids)
         assert req.kv_committed_len == prefill_kv_end

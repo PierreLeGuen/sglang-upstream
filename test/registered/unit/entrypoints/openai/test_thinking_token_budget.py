@@ -2,6 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from sglang.srt.entrypoints.openai.protocol import ChatCompletionRequest
+from sglang.test.ci.ci_register import register_cpu_ci
+
+register_cpu_ci(est_time=2, suite="base-a-test-cpu")
 
 BASE = {"model": "z-ai/glm-5.3-flash", "messages": [{"role": "user", "content": "OK"}]}
 
