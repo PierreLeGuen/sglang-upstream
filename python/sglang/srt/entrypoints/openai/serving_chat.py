@@ -1076,6 +1076,14 @@ class OpenAIServingChat(OpenAIServingBase):
             tool_call_constraint=processed_messages.tool_call_constraint,
             renderer_handles_response_format=self.chat_encoding_spec == "kimi_k3",
         )
+        if (
+            getattr(self.tokenizer_manager.model_config.hf_config, "model_type", None)
+            in ("glm5_next", "glm5_next_text")
+            and "thinking_token_budget" not in request.model_fields_set
+        ):
+            custom_params = dict(sampling_params.get("custom_params") or {})
+            custom_params.setdefault("thinking_budget", 8192)
+            sampling_params["custom_params"] = custom_params
         set_request_reasoning_end_token_ids(
             sampling_params, processed_messages.reasoning_end_token_ids
         )
