@@ -94,12 +94,14 @@ def matches(output, expected):
         )
     if expected == "band":
         return (
-            all(
-                re.search(rf"\b{word}\b", output)
-                for word in ("white", "black", "horizontal")
+            re.search(r"\bblack\b", output) is not None
+            and re.search(
+                r"\bwhite(?:\s+\w+){0,3}\s+(rectangle|band|stripe|bar)\b",
+                output,
             )
-            and re.search(r"\b(rectangle|band|stripe|bar)\b", output) is not None
-            and "circle" not in output
+            is not None
+            and re.search(r"\b(circle|square|vertical|red|green|blue)\b", output)
+            is None
         )
     return output == expected
 
