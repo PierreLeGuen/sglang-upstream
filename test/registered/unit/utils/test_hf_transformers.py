@@ -5,8 +5,10 @@ context length, GGUF detection, etc.) that don't require actual model files.
 """
 
 import inspect
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +22,7 @@ from sglang.srt.utils.hf_transformers.common import (
     _is_deepseek_ocr_model,
     _override_v_head_dim_if_zero,
     _patch_text_config,
+    _resolve_local_or_cached_file,
     attach_additional_stop_token_ids,
     check_gguf_file,
     get_context_length,
@@ -40,6 +43,264 @@ register_cpu_ci(est_time=6, suite="base-a-test-cpu")
 
 
 class TestGetProcessor(unittest.TestCase):
+    def test_glm5_next_keeps_native_canvas_and_black_padding(self):
+        import torch
+        from PIL import Image
+
+        from sglang.srt.utils.hf_transformers.glm5_next_image_processor import (
+            Glm5NextImageProcessor,
+        )
+        from sglang.srt.utils.hf_transformers.glm5_next_image_processor_pil import (
+            Glm5NextImageProcessorPil,
+        )
+
+        for cls in (Glm5NextImageProcessor, Glm5NextImageProcessorPil):
+            with self.subTest(backend=cls.__name__):
+                processor = cls()
+                for size, grid in ((256, 20), (512, 38)):
+                    result = processor(
+                        images=Image.new("RGB", (size, size), "red"),
+                        return_tensors="pt",
+                    )
+                    self.assertEqual(
+                        result["image_grid_thw"].tolist(), [[1, grid, grid]]
+                    )
+                    self.assertEqual(
+                        processor.get_number_of_image_patches(size, size), grid * grid
+                    )
+                    pixels = result["pixel_values"]
+                    mean = torch.tensor(processor.image_mean)[:, None, None, None]
+                    std = torch.tensor(processor.image_std)[:, None, None, None]
+                    first = pixels[0].reshape(3, 2, 14, 14)
+                    last = pixels[-1].reshape(3, 2, 14, 14)
+                    red = torch.tensor([1.0, 0.0, 0.0])[:, None, None, None]
+                    torch.testing.assert_close(
+                        first, ((red - mean) / std).expand_as(first)
+                    )
+                    # Both source sizes leave a full final patch of black
+                    # padding. Resizing the whole canvas would turn it red.
+                    torch.testing.assert_close(last, (-mean / std).expand_as(last))
+
+    def test_replaces_glm5_next_tokenizer_only_auto_processor(self):
+        config = SimpleNamespace(model_type="glm5_next", auto_map={})
+        tokenizer = MagicMock(spec=processor_utils.PreTrainedTokenizerBase)
+        multimodal_processor = MagicMock()
+        auto_config = MagicMock()
+        auto_config.from_pretrained.return_value = config
+        auto_processor = MagicMock()
+        auto_processor.from_pretrained.return_value = tokenizer
+
+        with (
+            patch.multiple(
+                processor_utils,
+                AutoConfig=auto_config,
+                AutoProcessor=auto_processor,
+            ),
+            patch.object(
+                processor_utils,
+                "_build_glm5_next_processor",
+                return_value=multimodal_processor,
+            ) as build_processor,
+            patch.object(
+                processor_utils,
+                "get_tokenizer_from_processor",
+                return_value=MagicMock(chat_template="template"),
+            ),
+        ):
+            result = processor_utils.get_processor("test-model")
+
+        self.assertIs(result, multimodal_processor)
+        build_processor.assert_called_once_with(
+            "test-model", tokenizer, None, image_processor_backend="auto"
+        )
+
+    def test_builds_glm5_next_multimodal_processor_from_nested_config(self):
+        tokenizer = MagicMock(chat_template="template")
+        image_processor = MagicMock()
+        video_processor = MagicMock()
+        processor = MagicMock()
+        nested_config = {
+            "image_processor": {
+                "image_processor_type": "Glm5NextImageProcessor",
+                "patch_size": 14,
+                "temporal_patch_size": 2,
+                "merge_size": 2,
+                "patch_expand_factor": 1,
+                "min_image_tokens": 16,
+                "max_image_tokens": 8000,
+            },
+            "video_processor": {
+                "video_processor_type": "Glm5NextVideoProcessor",
+                "patch_size": 14,
+                "temporal_patch_size": 2,
+                "merge_size": 2,
+                "min_image_tokens": 16,
+                "max_image_tokens": 240000,
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as file:
+            json.dump(nested_config, file)
+            file.flush()
+            with (
+                patch.object(
+                    processor_utils,
+                    "_resolve_local_or_cached_file",
+                    return_value=file.name,
+                ),
+                patch(
+                    "sglang.srt.utils.hf_transformers.glm5_next_image_processor.Glm5NextImageProcessor",
+                    return_value=image_processor,
+                ) as image_class,
+                patch(
+                    "transformers.Glm4vVideoProcessor",
+                    return_value=video_processor,
+                ) as video_class,
+                patch(
+                    "transformers.Glm4vProcessor", return_value=processor
+                ) as processor_class,
+            ):
+                result = processor_utils._build_glm5_next_processor(
+                    "model", tokenizer, None
+                )
+
+        self.assertIs(result, processor)
+        image_class.assert_called_once_with(
+            patch_size=14,
+            temporal_patch_size=2,
+            merge_size=2,
+            size={"shortest_edge": 25088, "longest_edge": 12544000},
+        )
+        video_class.assert_called_once_with(
+            patch_size=14,
+            temporal_patch_size=2,
+            merge_size=2,
+            size={"shortest_edge": 25088, "longest_edge": 376320000},
+        )
+        processor_class.assert_called_once_with(
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            video_processor=video_processor,
+            chat_template="template",
+        )
+        self.assertEqual(image_processor.max_image_tokens, 8000)
+        self.assertEqual(video_processor.max_image_tokens, 240000)
+        self.assertEqual(image_processor.patch_expand_factor, 1)
+        self.assertEqual(video_processor.patch_expand_factor, 1)
+
+    def test_glm5_next_fallback_honors_backend_and_local_subfolder(self):
+        from PIL import Image
+
+        tokenizer = MagicMock(spec=processor_utils.PreTrainedTokenizerBase)
+        tokenizer.chat_template = "template"
+        config = SimpleNamespace(model_type="glm5_next")
+        nested_config = {
+            name: {"min_image_tokens": 16, "max_image_tokens": 64}
+            for name in ("image_processor", "video_processor")
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            subfolder = Path(directory) / "processor"
+            subfolder.mkdir()
+            (subfolder / "processor_config.json").write_text(json.dumps(nested_config))
+            for options, backend in (
+                ({"image_processor_backend": "pil"}, "pil"),
+                ({"use_fast": False}, "pil"),
+                ({"image_processor_backend": "torchvision"}, "torchvision"),
+            ):
+                with (
+                    self.subTest(options=options),
+                    patch.object(
+                        processor_utils.AutoConfig,
+                        "from_pretrained",
+                        return_value=config,
+                    ),
+                    patch.object(
+                        processor_utils.AutoProcessor,
+                        "from_pretrained",
+                        return_value=tokenizer,
+                    ),
+                    patch.object(
+                        processor_utils.AutoImageProcessor, "from_pretrained"
+                    ) as auto_image,
+                    patch.object(
+                        processor_utils,
+                        "get_tokenizer_from_processor",
+                        return_value=MagicMock(chat_template="template"),
+                    ),
+                    patch(
+                        "transformers.Glm4vProcessor",
+                        side_effect=lambda **kw: SimpleNamespace(**kw),
+                    ),
+                ):
+                    processor = processor_utils.get_processor(
+                        directory, subfolder="processor", **options
+                    )
+                    self.assertEqual(processor.image_processor.backend, backend)
+                    auto_image.assert_not_called()
+                    # Real preprocessing at both resize limits, not a mock of
+                    # the constructor: spatial image tokens must stay in budget.
+                    for size in (28, 1024):
+                        inputs = processor.image_processor(
+                            images=Image.new("RGB", (size, size), "red"),
+                            return_tensors="pt",
+                        )
+                        tokens = int(inputs["image_grid_thw"].prod()) // 4
+                        self.assertGreaterEqual(tokens, 16)
+                        self.assertLessEqual(tokens, 64)
+
+    def test_glm5_next_fallback_uses_selected_hub_cache(self):
+        tokenizer = MagicMock(chat_template="template")
+        nested_config = {"image_processor": {}, "video_processor": {}}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as file:
+            json.dump(nested_config, file)
+            file.flush()
+            with (
+                patch(
+                    "huggingface_hub.hf_hub_download", return_value=file.name
+                ) as download,
+                patch("transformers.Glm4vProcessor"),
+            ):
+                processor_utils._build_glm5_next_processor(
+                    "test/model",
+                    tokenizer,
+                    "test-revision",
+                    cache_dir="/custom/cache",
+                    subfolder="processor",
+                )
+            download.assert_called_once_with(
+                "test/model",
+                "processor_config.json",
+                revision="test-revision",
+                cache_dir="/custom/cache",
+                subfolder="processor",
+                local_files_only=True,
+            )
+
+    def test_local_file_resolver_keeps_default_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "config.json"
+            file.write_text("{}")
+            self.assertEqual(
+                _resolve_local_or_cached_file(directory, "config.json"), str(file)
+            )
+
+    def test_glm5_next_processor_requires_both_component_configs(self):
+        tokenizer = MagicMock(chat_template="template")
+        config = {"image_processor": {}}
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as file:
+            json.dump(config, file)
+            file.flush()
+            with (
+                patch.object(
+                    processor_utils,
+                    "_resolve_local_or_cached_file",
+                    return_value=file.name,
+                ),
+                self.assertRaisesRegex(TypeError, "video_processor.*object"),
+            ):
+                processor_utils._build_glm5_next_processor("model", tokenizer, None)
+
     def test_does_not_forward_backend_to_auto_processor(self):
         config = SimpleNamespace(model_type="test_vlm", auto_map={})
         loaded_processor = MagicMock()
