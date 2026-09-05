@@ -503,6 +503,54 @@ class ServingChatTestCase(unittest.TestCase):
             self.assertEqual(adapted.session_id, "session-1")
             self.assertEqual(processed, self.basic_req)
 
+    def test_thinking_budget_uses_active_model_config(self):
+        cases = [
+            ("glm5_next", "custom-alias", {}, {"thinking_budget": 8192}),
+            ("glm5_next_text", "custom-alias", {}, {"thinking_budget": 8192}),
+            ("deepseek_v3", "z-ai/glm-5.3-flash", {}, None),
+            ("qwen3", "custom-alias", {}, None),
+            ("glm5_next", "custom-alias", {"thinking_token_budget": None}, None),
+            (
+                "glm5_next",
+                "custom-alias",
+                {"thinking_token_budget": 0},
+                {"thinking_budget": 0},
+            ),
+            (
+                "glm5_next",
+                "custom-alias",
+                {"custom_params": {"thinking_budget": 42, "other": 1}},
+                {"thinking_budget": 42, "other": 1},
+            ),
+            (
+                "glm5_next",
+                "custom-alias",
+                {"custom_params": {"other": 1}},
+                {"thinking_budget": 8192, "other": 1},
+            ),
+            (
+                "qwen3",
+                "custom-alias",
+                {"thinking_token_budget": 42},
+                {"thinking_budget": 42},
+            ),
+        ]
+        self.chat.default_sampling_params = {}
+        processed = MessageProcessingResult(
+            "prompt", [1, 2, 3], None, None, [], [], None
+        )
+        with patch.object(self.chat, "_process_messages", return_value=processed):
+            for model_type, alias, extra, expected in cases:
+                with self.subTest(model_type=model_type, extra=extra):
+                    self.tm.model_config.hf_config.model_type = model_type
+                    request = ChatCompletionRequest(
+                        model=alias,
+                        messages=[{"role": "user", "content": "OK"}],
+                        **extra,
+                    )
+                    adapted, _ = self.chat._convert_to_internal_request(request)
+                    self.assertEqual(adapted.sampling_params["custom_params"], expected)
+
     def test_chat_applies_pd_header_overrides(self):
         request = ChatCompletionRequest(
             model="x",

@@ -29,6 +29,7 @@ from sglang.srt.multimodal.encoder_preprocessing import (
 )
 from sglang.srt.multimodal.processors.glm4v import (
     _glm_effective_presize_budget,
+    _passthrough_video_metadata,
     glm_budget_kwargs,
     glm_decode_frames_at,
     glm_max_image_tokens_from_configs,
@@ -54,6 +55,7 @@ from sglang.srt.utils import (
     load_video,
 )
 from sglang.srt.utils.hf_transformers_utils import resolve_image_processor_backend
+from sglang.srt.utils.video_decoder import VideoDecoderWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -563,21 +565,12 @@ class EncoderPreprocessor:
                     for config in video_configs
                 ]
 
-            framed = any(isinstance(video, list) for video in video_items)
-            if framed:
-                processed = await asyncio.gather(
-                    *[
-                        asyncio.get_running_loop().run_in_executor(
-                            self.io_executor, preprocess_video_frames_sync, video
-                        )
-                        for video in video_items
-                    ]
-                )
-            else:
-                parallel = get_parallel()
-                tp_size = parallel.attn_tp_size
-                sampled = None
-                if len(video_items) == 1:
+            parallel = get_parallel()
+            tp_size = parallel.attn_tp_size
+            try:
+                if len(video_items) == 1 and isinstance(
+                    video_items[0], VideoDecoderWrapper
+                ):
                     vr = video_items[0]
                     config = video_configs[0]
                     sampled = glm_sample_frame_indices(
@@ -587,40 +580,51 @@ class EncoderPreprocessor:
                         target_fps=config.get("fps"),
                         max_frame_count=config.get("max_frames"),
                     )
-                if (
-                    self.server_args.mm_enable_dp_encoder
-                    and tp_size > 1
-                    and sampled is not None
-                    and len(sampled) >= max(32, tp_size * 2)
-                ):
-                    result = await self._dp_sharded_decode_single_video(
-                        video_items[0],
-                        video_configs[0],
-                        tp_rank=parallel.attn_tp_rank,
-                        tp_size=tp_size,
-                        video_processor_kwargs=video_processor_kwargs,
-                        precomputed_indices=sampled,
-                    )
-                    self._close_video_decoders(video_items)
-                    return result
+                    if (
+                        self.server_args.mm_enable_dp_encoder
+                        and tp_size > 1
+                        and len(sampled) >= max(32, tp_size * 2)
+                    ):
+                        return await self._dp_sharded_decode_single_video(
+                            vr,
+                            config,
+                            tp_rank=parallel.attn_tp_rank,
+                            tp_size=tp_size,
+                            video_processor_kwargs=video_processor_kwargs,
+                            precomputed_indices=sampled,
+                        )
 
-                processed = await asyncio.gather(
-                    *[
-                        asyncio.get_running_loop().run_in_executor(
+                async def process_video(video, config):
+                    loop = asyncio.get_running_loop()
+                    if isinstance(video, VideoDecoderWrapper):
+                        return await loop.run_in_executor(
                             self.io_executor,
                             glm_sample_and_decode_sync,
                             video,
-                            video_configs[index],
+                            config,
+                            self.video_processor,
                         )
-                        for index, video in enumerate(video_items)
-                    ]
+                    if isinstance(video, list) and (
+                        not video or isinstance(video[0], dict)
+                    ):
+                        return await loop.run_in_executor(
+                            self.io_executor, preprocess_video_frames_sync, video
+                        )
+                    return video, _passthrough_video_metadata(video, config)
+
+                processed = await asyncio.gather(
+                    *(
+                        process_video(video, config)
+                        for video, config in zip(video_items, video_configs)
+                    )
                 )
+            finally:
+                self._close_video_decoders(video_items)
             videos, video_metadata = map(list, zip(*processed))
             video_processor_kwargs["do_sample_frames"] = False
             video_processor_kwargs["return_metadata"] = True
             if video_metadata:
                 video_processor_kwargs["video_metadata"] = video_metadata
-            self._close_video_decoders(video_items)
             return videos, video_processor_kwargs
 
         self._close_video_decoders(video_items)

@@ -1488,6 +1488,13 @@ def setup_state_kv_args(
                     dsa_item_lens,
                 )
                 append_dsa_tail(dsa_pool)
+                if isinstance(draft_token_to_kv_pool, DSATokenToKVPool):
+                    append_state_component(
+                        kv_args,
+                        StateType.DSA,
+                        *draft_token_to_kv_pool.get_state_buf_infos(),
+                    )
+                    append_dsa_tail(draft_token_to_kv_pool)
         elif isinstance(token_to_kv_pool, (DSATokenToKVPool, NPUMLATokenToKVPool)):
             tail_ptrs, tail_lens, tail_item_lens = [], [], []
             if isinstance(token_to_kv_pool, DSATokenToKVPool):

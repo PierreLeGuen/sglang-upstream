@@ -980,7 +980,7 @@ class ChatCompletionRequest(BaseModel):
         if "thinking_token_budget" in values:
             budget = values.get("thinking_token_budget")
         else:
-            budget = 8192
+            return values
         if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
             values = dict(values)
             custom_params = dict(custom_params)

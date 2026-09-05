@@ -12,11 +12,11 @@ BASE = {"model": "z-ai/glm-5.3-flash", "messages": [{"role": "user", "content": 
 @pytest.mark.parametrize(
     "extra,expected",
     [
-        ({}, {"thinking_budget": 8192}),
+        ({}, None),
         ({"thinking_token_budget": 0}, {"thinking_budget": 0}),
         ({"thinking_token_budget": 4096}, {"thinking_budget": 4096}),
         ({"thinking_token_budget": None}, None),
-        ({"custom_params": {"other": 1}}, {"other": 1, "thinking_budget": 8192}),
+        ({"custom_params": {"other": 1}}, {"other": 1}),
         (
             {"thinking_token_budget": 4096, "custom_params": {"thinking_budget": 2048}},
             {"thinking_budget": 2048},
