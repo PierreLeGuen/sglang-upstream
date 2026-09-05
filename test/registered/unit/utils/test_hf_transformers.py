@@ -11,6 +11,9 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from transformers import PretrainedConfig
+from transformers.image_processing_utils import BaseImageProcessor
+
 import sglang.srt.utils.hf_transformers.processor as processor_utils
 from sglang.srt.utils import hf_transformers_patches
 from sglang.srt.utils.hf_transformers.common import (
@@ -28,8 +31,6 @@ from sglang.srt.utils.hf_transformers.common import (
 from sglang.srt.utils.hf_transformers.tokenizer import _fix_special_tokens_pattern
 from sglang.srt.utils.hf_transformers_patches import normalize_rope_scaling_compat
 from sglang.test.ci.ci_register import register_cpu_ci
-from transformers import PretrainedConfig
-from transformers.image_processing_utils import BaseImageProcessor
 
 register_cpu_ci(est_time=6, suite="base-a-test-cpu")
 

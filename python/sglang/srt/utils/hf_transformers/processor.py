@@ -17,14 +17,15 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from sglang.srt.multimodal.customized_mm_processor_utils import _CUSTOMIZED_MM_PROCESSOR
-from sglang.srt.utils import logger
 from transformers import (
     AutoImageProcessor,
     AutoProcessor,
     AutoTokenizer,
     PreTrainedTokenizerBase,
 )
+
+from sglang.srt.multimodal.customized_mm_processor_utils import _CUSTOMIZED_MM_PROCESSOR
+from sglang.srt.utils import logger
 
 from .common import (
     AutoConfig,
