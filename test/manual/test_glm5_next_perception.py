@@ -156,6 +156,12 @@ def check(args, case):
                 and choice["finish_reason"] == "stop"
                 and matches(choice["message"].get("content") or "", expected)
             )
+            if not result["ok"]:
+                # These are exclusively generated synthetic fixtures. Keep a
+                # bounded answer to distinguish perception from format errors.
+                result["synthetic_answer"] = (choice["message"].get("content") or "")[
+                    :400
+                ]
     except Exception as error:
         result["error"] = type(error).__name__
     result["elapsed_s"] = round(time.monotonic() - started, 3)

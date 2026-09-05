@@ -208,7 +208,9 @@ def _build_processor_manually(
     return proc_cls(**init_kwargs)
 
 
-def _build_glm5_next_processor(model_path, tokenizer, revision):
+def _build_glm5_next_processor(
+    model_path, tokenizer, revision, image_processor_backend="auto", **kwargs
+):
     """Build the GLM-5 Next processor until Transformers ships one.
 
     Current GLM-5 Next checkpoints use a nested ``processor_config.json``.
@@ -219,13 +221,17 @@ def _build_glm5_next_processor(model_path, tokenizer, revision):
     """
     from transformers import (
         Glm4vImageProcessor,
+        Glm4vImageProcessorPil,
         Glm4vProcessor,
         Glm4vVideoProcessor,
     )
 
     try:
         config_file = _resolve_local_or_cached_file(
-            model_path, "processor_config.json", revision
+            model_path,
+            "processor_config.json",
+            revision,
+            **{k: kwargs[k] for k in ("cache_dir", "subfolder") if k in kwargs},
         )
         with open(config_file) as file:
             processor_config = json.load(file)
@@ -264,6 +270,9 @@ def _build_glm5_next_processor(model_path, tokenizer, revision):
             raise RuntimeError(
                 f"Invalid {name} patch geometry in processor_config.json"
             )
+        # GLM-4V smart_resize budgets frames * height * width, including for
+        # still images where num_frames is temporal_patch_size. Keep that
+        # multiplier so the resulting merged image tokens match the limits.
         pixels_per_token = temporal_patch_size * (patch_size * merge_size) ** 2
         component_config["size"] = {
             "shortest_edge": min_tokens * pixels_per_token,
@@ -275,7 +284,12 @@ def _build_glm5_next_processor(model_path, tokenizer, revision):
         component.patch_expand_factor = patch_expand_factor
         return component
 
-    image_processor = build_component(Glm4vImageProcessor, "image_processor")
+    image_class = (
+        Glm4vImageProcessorPil
+        if image_processor_backend == "pil"
+        else Glm4vImageProcessor
+    )
+    image_processor = build_component(image_class, "image_processor")
     video_processor = build_component(Glm4vVideoProcessor, "video_processor")
     return Glm4vProcessor(
         image_processor=image_processor,
@@ -382,7 +396,11 @@ def get_processor(
                     processor, PreTrainedTokenizerBase
                 ):
                     processor = _build_glm5_next_processor(
-                        tokenizer_name, processor, revision
+                        tokenizer_name,
+                        processor,
+                        revision,
+                        image_processor_backend=image_processor_backend,
+                        **kwargs,
                     )
 
     except ValueError as e:
