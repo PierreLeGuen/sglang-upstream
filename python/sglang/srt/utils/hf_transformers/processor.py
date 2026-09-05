@@ -216,15 +216,17 @@ def _build_glm5_next_processor(
     Current GLM-5 Next checkpoints use a nested ``processor_config.json``.
     Transformers versions without the corresponding processor class silently
     return the tokenizer from ``AutoProcessor`` instead, dropping all visual
-    inputs. Reuse the compatible GLM-4V components, but fail loudly if the
+    inputs. Reuse GLM-4V token/video handling with GLM-5 image preprocessing,
+    but fail loudly if the
     checkpoint does not provide the component configuration needed to do so.
     """
     from transformers import (
-        Glm4vImageProcessor,
-        Glm4vImageProcessorPil,
         Glm4vProcessor,
         Glm4vVideoProcessor,
     )
+
+    from .glm5_next_image_processor import Glm5NextImageProcessor
+    from .glm5_next_image_processor_pil import Glm5NextImageProcessorPil
 
     try:
         config_file = _resolve_local_or_cached_file(
@@ -285,9 +287,9 @@ def _build_glm5_next_processor(
         return component
 
     image_class = (
-        Glm4vImageProcessorPil
+        Glm5NextImageProcessorPil
         if image_processor_backend == "pil"
-        else Glm4vImageProcessor
+        else Glm5NextImageProcessor
     )
     image_processor = build_component(image_class, "image_processor")
     video_processor = build_component(Glm4vVideoProcessor, "video_processor")

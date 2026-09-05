@@ -43,6 +43,44 @@ register_cpu_ci(est_time=6, suite="base-a-test-cpu")
 
 
 class TestGetProcessor(unittest.TestCase):
+    def test_glm5_next_keeps_native_canvas_and_black_padding(self):
+        import torch
+        from PIL import Image
+
+        from sglang.srt.utils.hf_transformers.glm5_next_image_processor import (
+            Glm5NextImageProcessor,
+        )
+        from sglang.srt.utils.hf_transformers.glm5_next_image_processor_pil import (
+            Glm5NextImageProcessorPil,
+        )
+
+        for cls in (Glm5NextImageProcessor, Glm5NextImageProcessorPil):
+            with self.subTest(backend=cls.__name__):
+                processor = cls()
+                for size, grid in ((256, 20), (512, 38)):
+                    result = processor(
+                        images=Image.new("RGB", (size, size), "red"),
+                        return_tensors="pt",
+                    )
+                    self.assertEqual(
+                        result["image_grid_thw"].tolist(), [[1, grid, grid]]
+                    )
+                    self.assertEqual(
+                        processor.get_number_of_image_patches(size, size), grid * grid
+                    )
+                    pixels = result["pixel_values"]
+                    mean = torch.tensor(processor.image_mean)[:, None, None, None]
+                    std = torch.tensor(processor.image_std)[:, None, None, None]
+                    first = pixels[0].reshape(3, 2, 14, 14)
+                    last = pixels[-1].reshape(3, 2, 14, 14)
+                    red = torch.tensor([1.0, 0.0, 0.0])[:, None, None, None]
+                    torch.testing.assert_close(
+                        first, ((red - mean) / std).expand_as(first)
+                    )
+                    # Both source sizes leave a full final patch of black
+                    # padding. Resizing the whole canvas would turn it red.
+                    torch.testing.assert_close(last, (-mean / std).expand_as(last))
+
     def test_replaces_glm5_next_tokenizer_only_auto_processor(self):
         config = SimpleNamespace(model_type="glm5_next", auto_map={})
         tokenizer = MagicMock(spec=processor_utils.PreTrainedTokenizerBase)
@@ -111,7 +149,7 @@ class TestGetProcessor(unittest.TestCase):
                     return_value=file.name,
                 ),
                 patch(
-                    "transformers.Glm4vImageProcessor",
+                    "sglang.srt.utils.hf_transformers.glm5_next_image_processor.Glm5NextImageProcessor",
                     return_value=image_processor,
                 ) as image_class,
                 patch(
